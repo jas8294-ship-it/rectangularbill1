@@ -1,0 +1,371 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Rectangle Billiard (2×1): Find slope that returns after N bounces</title>
+  <style>
+    :root { font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; }
+    body { margin: 0; padding: 18px; background: #fafafa; color: #111; }
+    .wrap { max-width: 980px; margin: 0 auto; }
+    h1 { font-size: 18px; margin: 0 0 10px; }
+    .grid { display: grid; grid-template-columns: 360px 1fr; gap: 14px; align-items: start; }
+    .card {
+      background: #fff; border: 1px solid #e6e6e6; border-radius: 12px;
+      padding: 12px; box-shadow: 0 1px 0 rgba(0,0,0,.03);
+    }
+    label { display: grid; gap: 6px; font-size: 13px; margin: 8px 0; }
+    input {
+      padding: 8px 10px; border: 1px solid #ddd; border-radius: 10px;
+      font-size: 14px; outline: none;
+    }
+    input:focus { border-color: #bbb; }
+    button{
+      padding: 9px 12px; border: 1px solid #ddd; background: #111; color: #fff;
+      border-radius: 10px; cursor: pointer; font-size: 14px;
+    }
+    button.secondary{ background: #fff; color:#111; }
+    .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 10px; }
+    canvas { width: 100%; height: auto; display: block; border-radius: 12px; background: #fff; }
+    pre {
+      margin: 0; padding: 10px; border-radius: 12px;
+      background: #0b1020; color: #e8ecff; overflow:auto; font-size: 12px;
+      line-height: 1.35;
+    }
+    .muted { color: #666; font-size: 12px; margin-top: 8px; }
+    .ok { color: #0a7a2f; font-weight: 600; }
+    .warn { color: #b25c00; font-weight: 600; }
+    .bad { color: #b00020; font-weight: 600; }
+    .pill { display:inline-block; padding: 2px 8px; border-radius: 999px; background:#f2f2f2; font-size: 12px; }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Rectangle billiard (fixed 2×1): slopes that return after <span class="pill">N</span> bounces</h1>
+
+  <div class="grid">
+    <div class="card">
+      <div class="muted">
+        Fixed rectangle: <b>a=2</b>, <b>b=1</b>. We enumerate candidates
+        slope = (m·b)/(n·a) with minimal bounce count N = 2(m+n).
+      </div>
+
+      <label>
+        Start point x₀ (0&lt;x₀&lt;2)
+        <input id="x0" type="number" step="0.01" value="0.30" />
+      </label>
+      <label>
+        Start point y₀ (0&lt;y₀&lt;1)
+        <input id="y0" type="number" step="0.01" value="0.40" />
+      </label>
+      <label>
+        Desired number of bounces N (even)
+        <input id="N" type="number" step="2" value="8" />
+      </label>
+
+      <div class="row">
+        <button id="run">Compute + plot best</button>
+        <button id="clear" class="secondary">Clear</button>
+      </div>
+
+      <div class="muted">
+        Notes:
+        <ul>
+          <li>Odd N has no closed-orbit solution in a rectangle.</li>
+          <li>Sometimes a candidate direction hits a corner → rejected.</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="card">
+      <canvas id="plot" width="720" height="380"></canvas>
+      <div class="row" style="margin-top:10px;">
+        <div id="summary" class="muted"></div>
+      </div>
+      <pre id="log" aria-label="results"></pre>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ============================================================
+   Port of your Python to plain JavaScript (no libraries)
+   Fixed rectangle: A=2, B=1
+   ============================================================ */
+const A = 2.0, B = 1.0;
+
+function candidateSlopesForBounces(N){
+  // Enumerate m,n >=1 with m+n = N/2, slope = (m*B)/(n*A)
+  if(N % 2 !== 0 || N < 2) return [];
+  const target = Math.floor(N/2);
+  const out = [];
+  for(let m=1; m<target; m++){
+    const n = target - m;
+    if(n >= 1){
+      const slope = (m * B) / (n * A);
+      out.push({m, n, slope});
+    }
+  }
+  return out;
+}
+
+function simulateUntilReturnAfterNBounces(x0, y0, slope, N_bounces, vx_sign=1, vy_sign=1, tol=1e-10){
+  // initial unit direction with given slope
+  const denom = Math.sqrt(1 + slope*slope);
+  let vx = vx_sign / denom;
+  let vy = vy_sign * slope / denom;
+
+  let x = x0, y = y0;
+  const pts = [[x,y]];
+  let corner_hit = false;
+
+  for(let k=0; k<N_bounces; k++){
+    let tx = Infinity, ty = Infinity;
+
+    if(Math.abs(vx) < tol) tx = Infinity;
+    else if(vx > 0) tx = (A - x) / vx;
+    else tx = (0 - x) / vx;
+
+    if(Math.abs(vy) < tol) ty = Infinity;
+    else if(vy > 0) ty = (B - y) / vy;
+    else ty = (0 - y) / vy;
+
+    const t = Math.min(tx, ty);
+    if(!Number.isFinite(t) || t <= tol) break;
+
+    let x_new = x + vx*t;
+    let y_new = y + vy*t;
+
+    // snap to boundary
+    if(Math.abs(x_new) < 1e-12) x_new = 0.0;
+    if(Math.abs(x_new - A) < 1e-12) x_new = A;
+    if(Math.abs(y_new) < 1e-12) y_new = 0.0;
+    if(Math.abs(y_new - B) < 1e-12) y_new = B;
+
+    pts.push([x_new, y_new]);
+
+    const hit_v = Math.abs(t - tx) < 1e-10;
+    const hit_h = Math.abs(t - ty) < 1e-10;
+
+    if(hit_v && hit_h){
+      corner_hit = true;
+      x = x_new; y = y_new;
+      break;
+    }
+
+    if(hit_v) vx = -vx;
+    if(hit_h) vy = -vy;
+
+    x = x_new; y = y_new;
+  }
+
+  if(corner_hit || pts.length !== N_bounces + 1){
+    return {pts, returned:false, corner_hit};
+  }
+
+  // After Nth bounce, check if we pass through (x0,y0) before next wall.
+  let tx_next = Infinity, ty_next = Infinity;
+
+  if(Math.abs(vx) < tol) tx_next = Infinity;
+  else if(vx > 0) tx_next = (A - x) / vx;
+  else tx_next = (0 - x) / vx;
+
+  if(Math.abs(vy) < tol) ty_next = Infinity;
+  else if(vy > 0) ty_next = (B - y) / vy;
+  else ty_next = (0 - y) / vy;
+
+  const t_next = Math.min(tx_next, ty_next);
+
+  const t_to_x = (Math.abs(vx) > tol) ? (x0 - x) / vx : null;
+  const t_to_y = (Math.abs(vy) > tol) ? (y0 - y) / vy : null;
+
+  let t_hit = null;
+  if(t_to_x === null) t_hit = t_to_y;
+  else if(t_to_y === null) t_hit = t_to_x;
+  else {
+    if(Math.abs(t_to_x - t_to_y) > 1e-8) return {pts, returned:false, corner_hit:false};
+    t_hit = 0.5*(t_to_x + t_to_y);
+  }
+
+  const returned = (t_hit !== null) && (t_hit > 1e-8) && (t_hit < t_next - 1e-8);
+  if(returned) pts.push([x0, y0]);
+
+  return {pts, returned, corner_hit:false};
+}
+
+function findWorkingSlopes(x0, y0, N_bounces){
+  const cands = candidateSlopesForBounces(N_bounces).sort((a,b)=>a.slope-b.slope);
+  const results = [];
+  for(const c of cands){
+    const sim = simulateUntilReturnAfterNBounces(x0, y0, c.slope, N_bounces, 1, 1);
+    results.push({
+      slope: c.slope, m: c.m, n: c.n,
+      points: sim.pts, returned: sim.returned, corner_hit: sim.corner_hit
+    });
+  }
+  return results;
+}
+
+/* ============================
+   Canvas plotting
+   ============================ */
+function drawScene(canvas, points, titleText){
+  const ctx = canvas.getContext("2d");
+  const W = canvas.width, H = canvas.height;
+  ctx.clearRect(0,0,W,H);
+
+  // World bounds (fixed rectangle) + padding
+  const padX = 0.08*A, padY = 0.08*B;
+  const xmin = -padX, xmax = A + padX;
+  const ymin = -padY, ymax = B + padY;
+
+  // fit to canvas with equal aspect
+  const sx = W/(xmax-xmin);
+  const sy = H/(ymax-ymin);
+  const s = Math.min(sx, sy);
+
+  const cx = (xmin+xmax)/2, cy = (ymin+ymax)/2;
+  const px = W/2, py = H/2;
+
+  function toCanvas(p){
+    const x = (p[0]-cx)*s + px;
+    const y = py - (p[1]-cy)*s;
+    return [x,y];
+  }
+
+  // title
+  if(titleText){
+    ctx.fillStyle = "#111";
+    ctx.font = "14px system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif";
+    ctx.fillText(titleText, 12, 18);
+  }
+
+  // rectangle boundary
+  ctx.strokeStyle = "#000";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  const rect = [[0,0],[A,0],[A,B],[0,B],[0,0]];
+  rect.forEach((p,i)=>{
+    const [x,y] = toCanvas(p);
+    if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+  });
+  ctx.stroke();
+
+  if(!points || points.length === 0) return;
+
+  // trajectory
+  ctx.strokeStyle = "#1f77b4";
+  ctx.lineWidth = 2;
+  ctx.lineJoin = "round";
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  points.forEach((p,i)=>{
+    const [x,y] = toCanvas(p);
+    if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+  });
+  ctx.stroke();
+
+  // bounce points (all except first)
+  ctx.fillStyle = "#ff7f0e";
+  for(let i=1; i<points.length; i++){
+    const [x,y] = toCanvas(points[i]);
+    ctx.beginPath();
+    ctx.arc(x,y,4,0,Math.PI*2);
+    ctx.fill();
+  }
+
+  // starting point in red
+  ctx.fillStyle = "red";
+  {
+    const [x,y] = toCanvas(points[0]);
+    ctx.beginPath();
+    ctx.arc(x,y,6,0,Math.PI*2);
+    ctx.fill();
+  }
+}
+
+/* ============================
+   UI glue
+   ============================ */
+const $ = (id)=>document.getElementById(id);
+const logEl = $("log");
+const summaryEl = $("summary");
+const canvas = $("plot");
+
+function log(text){ logEl.textContent = text; }
+
+function run(){
+  const x0 = parseFloat($("x0").value);
+  const y0 = parseFloat($("y0").value);
+  const N  = parseInt($("N").value, 10);
+
+  // basic validation
+  if(!(x0 > 0 && x0 < A && y0 > 0 && y0 < B)){
+    summaryEl.innerHTML = `<span class="bad">Start point must be strictly inside the rectangle.</span>`;
+    drawScene(canvas, [], "");
+    log("");
+    return;
+  }
+  if(!Number.isFinite(N) || N < 2){
+    summaryEl.innerHTML = `<span class="bad">Enter an even integer N ≥ 2.</span>`;
+    drawScene(canvas, [], "");
+    log("");
+    return;
+  }
+  if(N % 2 !== 0){
+    summaryEl.innerHTML = `<span class="bad">No solution: closed orbit cannot have an odd number of bounces.</span>`;
+    drawScene(canvas, [], "");
+    log("");
+    return;
+  }
+
+  const results = findWorkingSlopes(x0, y0, N);
+
+  if(results.length === 0){
+    summaryEl.innerHTML = `<span class="bad">No candidate (m,n) pairs found for this N.</span>`;
+    drawScene(canvas, [], "");
+    log("");
+    return;
+  }
+
+  let out = "";
+  out += `Rectangle fixed at a=${A}, b=${B}\n`;
+  out += `start=(${x0}, ${y0}), N=${N}\n\n`;
+  out += `Candidates (m,n,slope) and whether they return after N bounces:\n`;
+  for(const r of results){
+    const flag = r.returned ? "✅" : (r.corner_hit ? "⚠️ corner" : "—");
+    out += `  (m,n)=(${r.m},${r.n})  slope=${r.slope.toPrecision(6)}  ${flag}\n`;
+  }
+
+  const working = results.filter(r=>r.returned);
+  if(working.length === 0){
+    summaryEl.innerHTML =
+      `<span class="warn">No working slope found.</span> This often means the candidates hit a corner for this start point. Try tweaking (x₀,y₀) slightly.`;
+    drawScene(canvas, [], "");
+    log(out);
+    return;
+  }
+
+  const best = working[0];
+  summaryEl.innerHTML =
+    `<span class="ok">Best working slope:</span> slope = <b>${best.slope.toPrecision(6)}</b> (from m=${best.m}, n=${best.n})`;
+
+  drawScene(canvas, best.points, `Return after ${N} bounces (slope=${best.slope.toPrecision(6)})`);
+  log(out);
+}
+
+$("run").addEventListener("click", run);
+$("clear").addEventListener("click", ()=>{
+  $("x0").value = "0.30";
+  $("y0").value = "0.40";
+  $("N").value = "8";
+  summaryEl.textContent = "";
+  log("");
+  drawScene(canvas, [], "");
+});
+
+// draw empty initial
+drawScene(canvas, [], "");
+</script>
+</body>
+</html>
